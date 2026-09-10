@@ -1,9 +1,7 @@
 const express      = require('express');
 const cors         = require('cors');
 const { Pool }     = require('pg');
-const puppeteer    = require('puppeteer-core');
-const path         = require('path');
-const fs           = require('fs');
+const puppeteer    = require('puppeteer'); // full puppeteer — bundles its own Chromium, no system Chrome needed
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -21,40 +19,11 @@ app.use(express.json());
 // ── Health ────────────────────────────────────────────────────────────────────
 app.get('/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
-// ── Locate Chrome Binary ──────────────────────────────────────────────────────
-function getChromePath() {
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    return process.env.PUPPETEER_EXECUTABLE_PATH;
-  }
-
-  const baseDir = '/opt/render/project/src/.cache/puppeteer/chrome';
-  if (fs.existsSync(baseDir)) {
-    const versions = fs.readdirSync(baseDir);
-    if (versions.length > 0) {
-      const chromePath = path.join(baseDir, versions[0], 'chrome-linux64', 'chrome');
-      if (fs.existsSync(chromePath)) return chromePath;
-    }
-  }
-
-  // Fallback paths for local development or alternative Linux setups
-  const localCache = path.join(process.cwd(), '.cache', 'puppeteer');
-  if (fs.existsSync(localCache)) {
-    const versions = fs.readdirSync(path.join(localCache, 'chrome'));
-    if (versions.length > 0) {
-      return path.join(localCache, 'chrome', versions[0], 'chrome-linux64', 'chrome');
-    }
-  }
-
-  return '/usr/bin/google-chrome-stable';
-}
-
 // ── Browser launch ────────────────────────────────────────────────────────────
 async function launchBrowser() {
-  const executablePath = getChromePath();
-  console.log(`Launching Chrome from path: ${executablePath}`);
-
+  // Full puppeteer bundles its own Chromium (downloaded during npm install),
+  // so no executablePath or system Chrome install is needed.
   return puppeteer.launch({
-    executablePath,
     headless: 'new',
     args: [
       '--no-sandbox',
@@ -78,6 +47,7 @@ async function fetchSportyBet(browser) {
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36'
   );
 
+  // Intercept all API responses SportyBet makes internally
   page.on('response', async (response) => {
     const url = response.url();
     if (
@@ -94,13 +64,16 @@ async function fetchSportyBet(browser) {
   });
 
   try {
+    // Load the main page — this triggers all the internal API calls
     await page.goto('https://www.sportybet.com/ng/', {
       waitUntil: 'networkidle2',
       timeout: 30000
     });
 
+    // Give it extra time to load more sport tabs
     await new Promise(r => setTimeout(r, 5000));
 
+    // Click through sport tabs to trigger more API calls
     const sportTabs = await page.$$('[data-sport], .sport-tab, .nav-sport');
     for (const tab of sportTabs.slice(0, 6)) {
       try {
@@ -115,6 +88,7 @@ async function fetchSportyBet(browser) {
 
   await page.close();
 
+  // Parse all collected API responses into normalized events
   const events = [];
   for (const { data } of collected) {
     const tournaments = data?.data?.tournamentEvents || data?.data || [];
@@ -162,6 +136,7 @@ async function fetchNairabet(browser) {
     });
     await new Promise(r => setTimeout(r, 5000));
 
+    // Click sport tabs
     const sportTabs = await page.$$('[data-sport], .sport-item, .sports-list li, .sports-nav a');
     for (const tab of sportTabs.slice(0, 6)) {
       try {
@@ -176,6 +151,7 @@ async function fetchNairabet(browser) {
 
   await page.close();
 
+  // Parse collected responses
   const events = [];
   for (const { data } of collected) {
     const evList = data?.data || data?.events || data?.result || (Array.isArray(data) ? data : []);
@@ -354,6 +330,7 @@ async function syncArbs(freshArbs) {
     }
   }
 
+  // Remove stale arbs
   const toRemove = existing.rows.map(r => r.id).filter(id => !freshIds.includes(id));
   if (toRemove.length) {
     await pool.query(`DELETE FROM arb_opportunities WHERE id = ANY($1)`, [toRemove]);
@@ -372,6 +349,68 @@ app.get('/arbs', async (req, res) => {
     res.json({ success: true, ...result, page, perPage, pages: Math.ceil(result.total / perPage) });
   } catch(e) {
     console.error('Load error:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── DEBUG: dump raw intercepted payloads without any parsing/matching ────────
+app.post('/debug-scan', async (req, res) => {
+  let browser;
+  try {
+    browser = await launchBrowser();
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
+
+    const raw = { sportybet: [], nairabet: [] };
+
+    page.on('response', async (response) => {
+      const url = response.url();
+      const ct  = response.headers()['content-type'] || '';
+      if (!ct.includes('json')) return;
+      try {
+        const json = await response.json();
+        if (url.includes('sportybet.com')) raw.sportybet.push({ url, sample: json });
+        if (url.includes('nairabet.com'))  raw.nairabet.push({ url, sample: json });
+      } catch(e) {}
+    });
+
+    await page.goto('https://www.sportybet.com/ng/', { waitUntil: 'networkidle2', timeout: 30000 }).catch(e => console.log('sporty nav error', e.message));
+    await new Promise(r => setTimeout(r, 4000));
+    await page.close();
+
+    const page2 = await browser.newPage();
+    await page2.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
+    page2.on('response', async (response) => {
+      const url = response.url();
+      const ct  = response.headers()['content-type'] || '';
+      if (!ct.includes('json')) return;
+      try {
+        const json = await response.json();
+        if (url.includes('nairabet.com')) raw.nairabet.push({ url, sample: json });
+      } catch(e) {}
+    });
+    await page2.goto('https://www.nairabet.com/', { waitUntil: 'networkidle2', timeout: 30000 }).catch(e => console.log('naira nav error', e.message));
+    await new Promise(r => setTimeout(r, 4000));
+    await page2.close();
+
+    await browser.close();
+
+    // Truncate samples so response isn't massive — just first 2 calls per site, first 2000 chars each
+    const trim = (arr) => arr.slice(0, 3).map(x => ({
+      url: x.url,
+      sample: JSON.stringify(x.sample).slice(0, 3000)
+    }));
+
+    res.json({
+      success: true,
+      sportybet_calls_intercepted: raw.sportybet.length,
+      nairabet_calls_intercepted: raw.nairabet.length,
+      sportybet_sample: trim(raw.sportybet),
+      nairabet_sample: trim(raw.nairabet)
+    });
+
+  } catch(e) {
+    if (browser) { try { await browser.close(); } catch(_) {} }
     res.status(500).json({ success: false, error: e.message });
   }
 });
@@ -436,4 +475,3 @@ app.listen(PORT, () => {
   console.log(`Arb proxy v2 (Puppeteer) on port ${PORT}`);
   console.log(`DB: ${process.env.DATABASE_URL ? 'Connected' : 'WARNING: No DATABASE_URL'}`);
 });
-  
