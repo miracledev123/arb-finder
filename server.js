@@ -416,18 +416,45 @@ app.get('/debug-ip', async (req, res) => {
 
 // ── DEBUG: dump raw intercepted payloads without any parsing/matching ────────
 app.get('/debug-scan', async (req, res) => {
+  const startTime = Date.now();
+  const HARD_DEADLINE_MS = 55000; // respond no matter what by ~55s
+  const timeLeft = () => HARD_DEADLINE_MS - (Date.now() - startTime);
+  const elapsed  = () => ((Date.now() - startTime) / 1000).toFixed(1) + 's';
+
   let browser;
+  let responded = false;
+  const timings = {};
+
+  // Failsafe: if we blow past the deadline, respond with whatever we have instead of hanging
+  const failsafeTimer = setTimeout(async () => {
+    if (responded) return;
+    responded = true;
+    console.log('FAILSAFE TRIGGERED at', elapsed());
+    if (browser) { try { await browser.close(); } catch(_) {} }
+    res.status(200).json({
+      success: false,
+      timedOut: true,
+      timings,
+      message: 'Hit hard deadline before finishing — see timings for where it stalled.'
+    });
+  }, HARD_DEADLINE_MS);
+
   try {
+    let t0 = Date.now();
     browser = await launchBrowser();
+    timings.browserLaunch = elapsed();
+    console.log('Browser launched at', elapsed());
+
     const page = await browser.newPage();
     await authenticatePage(page);
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
+    timings.sportyPageSetup = elapsed();
 
     const raw = { sportybet: [], nairabet: [] };
     const diagnostics = { sportybet: {}, nairabet: {} };
 
-    const allResponses = [];
+    let allResponses = [];
     page.on('response', async (response) => {
       const url = response.url();
       allResponses.push({ url, status: response.status() });
@@ -436,38 +463,63 @@ app.get('/debug-scan', async (req, res) => {
       try {
         const json = await response.json();
         if (url.includes('sportybet.com')) raw.sportybet.push({ url, sample: json });
-        if (url.includes('nairabet.com'))  raw.nairabet.push({ url, sample: json });
       } catch(e) {}
     });
 
-    const consoleMsgs = [];
+    let consoleMsgs = [];
     page.on('console', msg => consoleMsgs.push(msg.text()));
     page.on('pageerror', err => consoleMsgs.push('PAGEERROR: ' + err.message));
 
     let sportyNavResult = 'ok';
     try {
-      await page.goto('https://www.sportybet.com/ng/', { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await new Promise(r => setTimeout(r, 5000));
+      console.log('Starting SportyBet nav at', elapsed());
+      await page.goto('https://www.sportybet.com/ng/sport/football', { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await new Promise(r => setTimeout(r, 4000));
     } catch(e) { sportyNavResult = 'ERROR: ' + e.message; }
+    timings.sportyNavDone = elapsed();
+    console.log('SportyBet nav finished at', elapsed(), '-', sportyNavResult);
 
     diagnostics.sportybet = {
       navResult: sportyNavResult,
       finalUrl: page.url(),
       title: await page.title().catch(() => 'N/A'),
       totalResponses: allResponses.length,
-      sampleResponseUrls: allResponses.slice(0, 15).map(r => r.status + ' ' + r.url),
+      sampleResponseUrls: allResponses.slice(0, 20).map(r => r.status + ' ' + r.url),
       bodyTextSnippet: await page.evaluate(() => document.body ? document.body.innerText.slice(0, 300) : 'NO BODY').catch(() => 'eval failed'),
-      consoleErrors: consoleMsgs.slice(0, 10)
+      consoleErrors: consoleMsgs.slice(0, 8)
     };
 
     await page.close();
-    allResponses.length = 0;
-    consoleMsgs.length = 0;
+    allResponses = [];
+    consoleMsgs = [];
+    timings.sportyPageClosed = elapsed();
+
+    // Bail early if we're already low on time — skip Nairabet, return what we have
+    if (timeLeft() < 15000) {
+      timings.skippedNairabet = 'not enough time left: ' + elapsed();
+      await browser.close();
+      clearTimeout(failsafeTimer);
+      if (!responded) {
+        responded = true;
+        return res.json({
+          success: true,
+          partial: true,
+          sportybet_calls_intercepted: raw.sportybet.length,
+          nairabet_calls_intercepted: 0,
+          sportybet_sample: raw.sportybet.slice(0,5).map(x => ({ url: x.url, sample: JSON.stringify(x.sample).slice(0,2500) })),
+          nairabet_sample: [],
+          diagnostics,
+          timings
+        });
+      }
+      return;
+    }
 
     const page2 = await browser.newPage();
     await authenticatePage(page2);
     await page2.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
     await page2.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
+    timings.nairaPageSetup = elapsed();
 
     page2.on('response', async (response) => {
       const url = response.url();
@@ -476,7 +528,7 @@ app.get('/debug-scan', async (req, res) => {
       if (!ct.includes('json')) return;
       try {
         const json = await response.json();
-        if (url.includes('nairabet.com')) raw.nairabet.push({ url, sample: json });
+        if (url.includes('nairabet.com') || url.includes('biahosted.com') || url.includes('altenar')) raw.nairabet.push({ url, sample: json });
       } catch(e) {}
     });
     page2.on('console', msg => consoleMsgs.push(msg.text()));
@@ -484,40 +536,54 @@ app.get('/debug-scan', async (req, res) => {
 
     let nairaNavResult = 'ok';
     try {
-      await page2.goto('https://www.nairabet.com/', { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await new Promise(r => setTimeout(r, 5000));
+      console.log('Starting Nairabet nav at', elapsed());
+      const remainingForNaira = Math.max(8000, timeLeft() - 8000); // leave 8s buffer to respond
+      await page2.goto('https://nairabet.com/sports/football', { waitUntil: 'domcontentloaded', timeout: remainingForNaira });
+      await new Promise(r => setTimeout(r, Math.min(5000, Math.max(0, timeLeft() - 5000))));
     } catch(e) { nairaNavResult = 'ERROR: ' + e.message; }
+    timings.nairaNavDone = elapsed();
+    console.log('Nairabet nav finished at', elapsed(), '-', nairaNavResult);
 
     diagnostics.nairabet = {
       navResult: nairaNavResult,
       finalUrl: page2.url(),
       title: await page2.title().catch(() => 'N/A'),
       totalResponses: allResponses.length,
-      sampleResponseUrls: allResponses.slice(0, 15).map(r => r.status + ' ' + r.url),
+      sampleResponseUrls: allResponses.slice(0, 20).map(r => r.status + ' ' + r.url),
       bodyTextSnippet: await page2.evaluate(() => document.body ? document.body.innerText.slice(0, 300) : 'NO BODY').catch(() => 'eval failed'),
-      consoleErrors: consoleMsgs.slice(0, 10)
+      consoleErrors: consoleMsgs.slice(0, 8)
     };
 
     await page2.close();
     await browser.close();
+    timings.allDone = elapsed();
 
-    const trim = (arr) => arr.slice(0, 2).map(x => ({
+    const trim = (arr) => arr.slice(0, 5).map(x => ({
       url: x.url,
-      sample: JSON.stringify(x.sample).slice(0, 1500)
+      sample: JSON.stringify(x.sample).slice(0, 2500)
     }));
 
-    res.json({
-      success: true,
-      sportybet_calls_intercepted: raw.sportybet.length,
-      nairabet_calls_intercepted: raw.nairabet.length,
-      sportybet_sample: trim(raw.sportybet),
-      nairabet_sample: trim(raw.nairabet),
-      diagnostics
-    });
+    clearTimeout(failsafeTimer);
+    if (!responded) {
+      responded = true;
+      res.json({
+        success: true,
+        sportybet_calls_intercepted: raw.sportybet.length,
+        nairabet_calls_intercepted: raw.nairabet.length,
+        sportybet_sample: trim(raw.sportybet),
+        nairabet_sample: trim(raw.nairabet),
+        diagnostics,
+        timings
+      });
+    }
 
   } catch(e) {
+    clearTimeout(failsafeTimer);
     if (browser) { try { await browser.close(); } catch(_) {} }
-    res.status(500).json({ success: false, error: e.message });
+    if (!responded) {
+      responded = true;
+      res.status(500).json({ success: false, error: e.message, timings });
+    }
   }
 });
 
@@ -577,7 +643,12 @@ app.delete('/arbs', async (_, res) => {
   } catch(e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Arb proxy v2 (Puppeteer) on port ${PORT}`);
   console.log(`DB: ${process.env.DATABASE_URL ? 'Connected' : 'WARNING: No DATABASE_URL'}`);
 });
+
+// Raise Node's own HTTP server timeout so long Puppeteer scans aren't killed early
+server.timeout = 120000;       // 2 minutes
+server.keepAliveTimeout = 120000;
+server.headersTimeout = 125000;
