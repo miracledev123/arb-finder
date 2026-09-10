@@ -368,7 +368,7 @@ app.get('/debug-chrome', async (req, res) => {
 });
 
 // ── DEBUG: dump raw intercepted payloads without any parsing/matching ────────
-app.post('/debug-scan', async (req, res) => {
+app.get('/debug-scan', async (req, res) => {
   let browser;
   try {
     browser = await launchBrowser();
@@ -388,8 +388,9 @@ app.post('/debug-scan', async (req, res) => {
       } catch(e) {}
     });
 
-    await page.goto('https://www.sportybet.com/ng/', { waitUntil: 'networkidle2', timeout: 30000 }).catch(e => console.log('sporty nav error', e.message));
-    await new Promise(r => setTimeout(r, 4000));
+    // Sporty: use domcontentloaded (faster than networkidle2) with a short settle time
+    await page.goto('https://www.sportybet.com/ng/', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(e => console.log('sporty nav error', e.message));
+    await new Promise(r => setTimeout(r, 2500));
     await page.close();
 
     const page2 = await browser.newPage();
@@ -403,16 +404,16 @@ app.post('/debug-scan', async (req, res) => {
         if (url.includes('nairabet.com')) raw.nairabet.push({ url, sample: json });
       } catch(e) {}
     });
-    await page2.goto('https://www.nairabet.com/', { waitUntil: 'networkidle2', timeout: 30000 }).catch(e => console.log('naira nav error', e.message));
-    await new Promise(r => setTimeout(r, 4000));
+    await page2.goto('https://www.nairabet.com/', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(e => console.log('naira nav error', e.message));
+    await new Promise(r => setTimeout(r, 2500));
     await page2.close();
 
     await browser.close();
 
-    // Truncate samples so response isn't massive — just first 2 calls per site, first 2000 chars each
-    const trim = (arr) => arr.slice(0, 3).map(x => ({
+    // Truncate samples so response isn't massive — just first 2 calls per site, first 1500 chars each
+    const trim = (arr) => arr.slice(0, 2).map(x => ({
       url: x.url,
-      sample: JSON.stringify(x.sample).slice(0, 3000)
+      sample: JSON.stringify(x.sample).slice(0, 1500)
     }));
 
     res.json({
