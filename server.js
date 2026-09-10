@@ -2,6 +2,8 @@ const express      = require('express');
 const cors         = require('cors');
 const { Pool }     = require('pg');
 const puppeteer    = require('puppeteer-core');
+const path         = require('path');
+const fs           = require('fs');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -19,14 +21,37 @@ app.use(express.json());
 // ── Health ────────────────────────────────────────────────────────────────────
 app.get('/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
+// ── Locate Chrome Binary ──────────────────────────────────────────────────────
+function getChromePath() {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    return process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+
+  const baseDir = '/opt/render/project/src/.cache/puppeteer/chrome';
+  if (fs.existsSync(baseDir)) {
+    const versions = fs.readdirSync(baseDir);
+    if (versions.length > 0) {
+      const chromePath = path.join(baseDir, versions[0], 'chrome-linux64', 'chrome');
+      if (fs.existsSync(chromePath)) return chromePath;
+    }
+  }
+
+  // Fallback paths for local development or alternative Linux setups
+  const localCache = path.join(process.cwd(), '.cache', 'puppeteer');
+  if (fs.existsSync(localCache)) {
+    const versions = fs.readdirSync(path.join(localCache, 'chrome'));
+    if (versions.length > 0) {
+      return path.join(localCache, 'chrome', versions[0], 'chrome-linux64', 'chrome');
+    }
+  }
+
+  return '/usr/bin/google-chrome-stable';
+}
+
 // ── Browser launch ────────────────────────────────────────────────────────────
 async function launchBrowser() {
-  // Render provides Chromium at this path when you add the buildpack
-  const executablePath =
-    process.env.PUPPETEER_EXECUTABLE_PATH ||
-    '/usr/bin/google-chrome-stable'       ||
-    '/usr/bin/chromium-browser'           ||
-    '/usr/bin/chromium';
+  const executablePath = getChromePath();
+  console.log(`Launching Chrome from path: ${executablePath}`);
 
   return puppeteer.launch({
     executablePath,
@@ -53,7 +78,6 @@ async function fetchSportyBet(browser) {
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36'
   );
 
-  // Intercept all API responses SportyBet makes internally
   page.on('response', async (response) => {
     const url = response.url();
     if (
@@ -70,16 +94,13 @@ async function fetchSportyBet(browser) {
   });
 
   try {
-    // Load the main page — this triggers all the internal API calls
     await page.goto('https://www.sportybet.com/ng/', {
       waitUntil: 'networkidle2',
       timeout: 30000
     });
 
-    // Give it extra time to load more sport tabs
     await new Promise(r => setTimeout(r, 5000));
 
-    // Click through sport tabs to trigger more API calls
     const sportTabs = await page.$$('[data-sport], .sport-tab, .nav-sport');
     for (const tab of sportTabs.slice(0, 6)) {
       try {
@@ -94,7 +115,6 @@ async function fetchSportyBet(browser) {
 
   await page.close();
 
-  // Parse all collected API responses into normalized events
   const events = [];
   for (const { data } of collected) {
     const tournaments = data?.data?.tournamentEvents || data?.data || [];
@@ -142,7 +162,6 @@ async function fetchNairabet(browser) {
     });
     await new Promise(r => setTimeout(r, 5000));
 
-    // Click sport tabs
     const sportTabs = await page.$$('[data-sport], .sport-item, .sports-list li, .sports-nav a');
     for (const tab of sportTabs.slice(0, 6)) {
       try {
@@ -157,7 +176,6 @@ async function fetchNairabet(browser) {
 
   await page.close();
 
-  // Parse collected responses
   const events = [];
   for (const { data } of collected) {
     const evList = data?.data || data?.events || data?.result || (Array.isArray(data) ? data : []);
@@ -336,7 +354,6 @@ async function syncArbs(freshArbs) {
     }
   }
 
-  // Remove stale arbs
   const toRemove = existing.rows.map(r => r.id).filter(id => !freshIds.includes(id));
   if (toRemove.length) {
     await pool.query(`DELETE FROM arb_opportunities WHERE id = ANY($1)`, [toRemove]);
@@ -419,3 +436,4 @@ app.listen(PORT, () => {
   console.log(`Arb proxy v2 (Puppeteer) on port ${PORT}`);
   console.log(`DB: ${process.env.DATABASE_URL ? 'Connected' : 'WARNING: No DATABASE_URL'}`);
 });
+  
