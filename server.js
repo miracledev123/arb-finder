@@ -522,7 +522,7 @@ app.get('/debug-scan-sportybet', async (req, res) => {
     url: 'https://www.sportybet.com/ng/sport/football',
     matchDomains: ['sportybet.com'],
     waitMs: 5000,
-    hardDeadlineMs: 55000
+    hardDeadlineMs: 100000
   });
 });
 
@@ -530,9 +530,9 @@ app.get('/debug-scan-sportybet', async (req, res) => {
 app.get('/debug-scan-nairabet', async (req, res) => {
   await debugSingleSite(res, {
     name: 'nairabet',
-    url: 'https://nairabet.com/sports/football',
+    url: 'https://nairabet.com/',
     matchDomains: ['nairabet.com', 'biahosted.com', 'altenar'],
-    waitMs: 6000,
+    waitMs: 8000,
     hardDeadlineMs: 55000
   });
 });
