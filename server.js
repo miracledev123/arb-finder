@@ -415,152 +415,81 @@ app.get('/debug-ip', async (req, res) => {
 });
 
 // ── DEBUG: dump raw intercepted payloads without any parsing/matching ────────
-app.get('/debug-scan', async (req, res) => {
+// ── Shared single-site debug scanner ──────────────────────────────────────────
+async function debugSingleSite(res, { name, url, matchDomains, waitMs, hardDeadlineMs }) {
   const startTime = Date.now();
-  const HARD_DEADLINE_MS = 55000; // respond no matter what by ~55s
-  const timeLeft = () => HARD_DEADLINE_MS - (Date.now() - startTime);
-  const elapsed  = () => ((Date.now() - startTime) / 1000).toFixed(1) + 's';
-
+  const elapsed = () => ((Date.now() - startTime) / 1000).toFixed(1) + 's';
   let browser;
   let responded = false;
   const timings = {};
 
-  // Failsafe: if we blow past the deadline, respond with whatever we have instead of hanging
   const failsafeTimer = setTimeout(async () => {
     if (responded) return;
     responded = true;
-    console.log('FAILSAFE TRIGGERED at', elapsed());
+    console.log(`[${name}] FAILSAFE TRIGGERED at`, elapsed());
     if (browser) { try { await browser.close(); } catch(_) {} }
     res.status(200).json({
       success: false,
       timedOut: true,
       timings,
-      message: 'Hit hard deadline before finishing — see timings for where it stalled.'
+      message: `[${name}] Hit hard deadline before finishing — see timings for where it stalled.`
     });
-  }, HARD_DEADLINE_MS);
+  }, hardDeadlineMs);
 
   try {
-    let t0 = Date.now();
     browser = await launchBrowser();
     timings.browserLaunch = elapsed();
-    console.log('Browser launched at', elapsed());
+    console.log(`[${name}] Browser launched at`, elapsed());
 
     const page = await browser.newPage();
     await authenticatePage(page);
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
-    timings.sportyPageSetup = elapsed();
+    timings.pageSetup = elapsed();
 
-    const raw = { sportybet: [], nairabet: [] };
-    const diagnostics = { sportybet: {}, nairabet: {} };
-
-    let allResponses = [];
+    const raw = [];
+    const allResponses = [];
     page.on('response', async (response) => {
-      const url = response.url();
-      allResponses.push({ url, status: response.status() });
-      const ct  = response.headers()['content-type'] || '';
+      const respUrl = response.url();
+      allResponses.push({ url: respUrl, status: response.status() });
+      const ct = response.headers()['content-type'] || '';
       if (!ct.includes('json')) return;
       try {
         const json = await response.json();
-        if (url.includes('sportybet.com')) raw.sportybet.push({ url, sample: json });
+        if (matchDomains.some(d => respUrl.includes(d))) raw.push({ url: respUrl, sample: json });
       } catch(e) {}
     });
 
-    let consoleMsgs = [];
+    const consoleMsgs = [];
     page.on('console', msg => consoleMsgs.push(msg.text()));
     page.on('pageerror', err => consoleMsgs.push('PAGEERROR: ' + err.message));
 
-    let sportyNavResult = 'ok';
+    let navResult = 'ok';
     try {
-      console.log('Starting SportyBet nav at', elapsed());
-      await page.goto('https://www.sportybet.com/ng/sport/football', { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await new Promise(r => setTimeout(r, 4000));
-    } catch(e) { sportyNavResult = 'ERROR: ' + e.message; }
-    timings.sportyNavDone = elapsed();
-    console.log('SportyBet nav finished at', elapsed(), '-', sportyNavResult);
+      console.log(`[${name}] Starting nav at`, elapsed());
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: Math.max(15000, hardDeadlineMs - 20000) });
+      await new Promise(r => setTimeout(r, waitMs));
+    } catch(e) { navResult = 'ERROR: ' + e.message; }
+    timings.navDone = elapsed();
+    console.log(`[${name}] Nav finished at`, elapsed(), '-', navResult);
 
-    diagnostics.sportybet = {
-      navResult: sportyNavResult,
+    const diagnostics = {
+      navResult,
       finalUrl: page.url(),
       title: await page.title().catch(() => 'N/A'),
       totalResponses: allResponses.length,
-      sampleResponseUrls: allResponses.slice(0, 20).map(r => r.status + ' ' + r.url),
-      bodyTextSnippet: await page.evaluate(() => document.body ? document.body.innerText.slice(0, 300) : 'NO BODY').catch(() => 'eval failed'),
-      consoleErrors: consoleMsgs.slice(0, 8)
+      sampleResponseUrls: allResponses.slice(0, 25).map(r => r.status + ' ' + r.url),
+      bodyTextSnippet: await page.evaluate(() => document.body ? document.body.innerText.slice(0, 400) : 'NO BODY').catch(() => 'eval failed'),
+      consoleErrors: consoleMsgs.slice(0, 10)
     };
 
     await page.close();
-    allResponses = [];
-    consoleMsgs = [];
-    timings.sportyPageClosed = elapsed();
-
-    // Bail early if we're already low on time — skip Nairabet, return what we have
-    if (timeLeft() < 15000) {
-      timings.skippedNairabet = 'not enough time left: ' + elapsed();
-      await browser.close();
-      clearTimeout(failsafeTimer);
-      if (!responded) {
-        responded = true;
-        return res.json({
-          success: true,
-          partial: true,
-          sportybet_calls_intercepted: raw.sportybet.length,
-          nairabet_calls_intercepted: 0,
-          sportybet_sample: raw.sportybet.slice(0,5).map(x => ({ url: x.url, sample: JSON.stringify(x.sample).slice(0,2500) })),
-          nairabet_sample: [],
-          diagnostics,
-          timings
-        });
-      }
-      return;
-    }
-
-    const page2 = await browser.newPage();
-    await authenticatePage(page2);
-    await page2.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
-    await page2.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
-    timings.nairaPageSetup = elapsed();
-
-    page2.on('response', async (response) => {
-      const url = response.url();
-      allResponses.push({ url, status: response.status() });
-      const ct  = response.headers()['content-type'] || '';
-      if (!ct.includes('json')) return;
-      try {
-        const json = await response.json();
-        if (url.includes('nairabet.com') || url.includes('biahosted.com') || url.includes('altenar')) raw.nairabet.push({ url, sample: json });
-      } catch(e) {}
-    });
-    page2.on('console', msg => consoleMsgs.push(msg.text()));
-    page2.on('pageerror', err => consoleMsgs.push('PAGEERROR: ' + err.message));
-
-    let nairaNavResult = 'ok';
-    try {
-      console.log('Starting Nairabet nav at', elapsed());
-      const remainingForNaira = Math.max(8000, timeLeft() - 8000); // leave 8s buffer to respond
-      await page2.goto('https://nairabet.com/sports/football', { waitUntil: 'domcontentloaded', timeout: remainingForNaira });
-      await new Promise(r => setTimeout(r, Math.min(5000, Math.max(0, timeLeft() - 5000))));
-    } catch(e) { nairaNavResult = 'ERROR: ' + e.message; }
-    timings.nairaNavDone = elapsed();
-    console.log('Nairabet nav finished at', elapsed(), '-', nairaNavResult);
-
-    diagnostics.nairabet = {
-      navResult: nairaNavResult,
-      finalUrl: page2.url(),
-      title: await page2.title().catch(() => 'N/A'),
-      totalResponses: allResponses.length,
-      sampleResponseUrls: allResponses.slice(0, 20).map(r => r.status + ' ' + r.url),
-      bodyTextSnippet: await page2.evaluate(() => document.body ? document.body.innerText.slice(0, 300) : 'NO BODY').catch(() => 'eval failed'),
-      consoleErrors: consoleMsgs.slice(0, 8)
-    };
-
-    await page2.close();
     await browser.close();
     timings.allDone = elapsed();
 
-    const trim = (arr) => arr.slice(0, 5).map(x => ({
+    const trim = raw.slice(0, 6).map(x => ({
       url: x.url,
-      sample: JSON.stringify(x.sample).slice(0, 2500)
+      sample: JSON.stringify(x.sample).slice(0, 3000)
     }));
 
     clearTimeout(failsafeTimer);
@@ -568,10 +497,9 @@ app.get('/debug-scan', async (req, res) => {
       responded = true;
       res.json({
         success: true,
-        sportybet_calls_intercepted: raw.sportybet.length,
-        nairabet_calls_intercepted: raw.nairabet.length,
-        sportybet_sample: trim(raw.sportybet),
-        nairabet_sample: trim(raw.nairabet),
+        site: name,
+        calls_intercepted: raw.length,
+        sample: trim,
         diagnostics,
         timings
       });
@@ -585,6 +513,28 @@ app.get('/debug-scan', async (req, res) => {
       res.status(500).json({ success: false, error: e.message, timings });
     }
   }
+}
+
+// ── DEBUG: SportyBet only — full 55s budget to itself ─────────────────────────
+app.get('/debug-scan-sportybet', async (req, res) => {
+  await debugSingleSite(res, {
+    name: 'sportybet',
+    url: 'https://www.sportybet.com/ng/sport/football',
+    matchDomains: ['sportybet.com'],
+    waitMs: 5000,
+    hardDeadlineMs: 55000
+  });
+});
+
+// ── DEBUG: Nairabet only — full 55s budget to itself ──────────────────────────
+app.get('/debug-scan-nairabet', async (req, res) => {
+  await debugSingleSite(res, {
+    name: 'nairabet',
+    url: 'https://nairabet.com/sports/football',
+    matchDomains: ['nairabet.com', 'biahosted.com', 'altenar'],
+    waitMs: 6000,
+    hardDeadlineMs: 55000
+  });
 });
 
 app.post('/scan', async (req, res) => {
