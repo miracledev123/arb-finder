@@ -1,8 +1,10 @@
-const express      = require('express');
-const cors         = require('cors');
-const { Pool }     = require('pg');
-const chromium     = require('@sparticuz/chromium');
-const puppeteer    = require('puppeteer-core'); // driven by @sparticuz/chromium's bundled binary — survives Render's ephemeral filesystem
+const express       = require('express');
+const cors          = require('cors');
+const { Pool }      = require('pg');
+const chromium      = require('@sparticuz/chromium');
+const puppeteerExtra = require('puppeteer-extra');
+const StealthPlugin  = require('puppeteer-extra-plugin-stealth');
+puppeteerExtra.use(StealthPlugin());
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -20,24 +22,48 @@ app.use(express.json());
 // ── Health ────────────────────────────────────────────────────────────────────
 app.get('/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
+// ── Residential proxy config (DataImpulse) ────────────────────────────────────
+const PROXY_HOST = process.env.PROXY_HOST || 'gw.dataimpulse.com';
+const PROXY_PORT = process.env.PROXY_PORT || '823';
+const PROXY_USER = process.env.PROXY_USER || ''; // e.g. 39f93bc73b4cfb5caa29__cr.ng
+const PROXY_PASS = process.env.PROXY_PASS || '';
+const PROXY_ENABLED = !!(PROXY_USER && PROXY_PASS);
+
 // ── Browser launch ────────────────────────────────────────────────────────────
 // @sparticuz/chromium bundles a Chrome binary specifically packaged to survive
 // ephemeral/serverless filesystems like Render's — no system install needed.
+// puppeteer-extra + stealth mask automation fingerprints (webdriver flag, etc).
+// Proxy routes traffic through a residential Nigerian IP to avoid datacenter blocks.
 async function launchBrowser() {
   const executablePath = await chromium.executablePath();
   console.log('Chrome executable resolved to:', executablePath);
+  console.log('Proxy enabled:', PROXY_ENABLED);
 
-  return puppeteer.launch({
+  const args = [...chromium.args];
+  if (PROXY_ENABLED) {
+    args.push(`--proxy-server=${PROXY_HOST}:${PROXY_PORT}`);
+  }
+
+  return puppeteerExtra.launch({
     executablePath,
     headless: chromium.headless,
-    args: chromium.args,
+    args,
     defaultViewport: chromium.defaultViewport,
   });
+}
+
+// Call this right after browser.newPage() whenever a proxy is enabled —
+// residential proxies with username/password need explicit authentication.
+async function authenticatePage(page) {
+  if (PROXY_ENABLED) {
+    await page.authenticate({ username: PROXY_USER, password: PROXY_PASS });
+  }
 }
 
 // ── Intercept XHR/fetch from SportyBet ───────────────────────────────────────
 async function fetchSportyBet(browser) {
   const page = await browser.newPage();
+  await authenticatePage(page);
   const collected = [];
 
   await page.setUserAgent(
@@ -105,6 +131,7 @@ async function fetchSportyBet(browser) {
 // ── Intercept XHR/fetch from Nairabet ────────────────────────────────────────
 async function fetchNairabet(browser) {
   const page = await browser.newPage();
+  await authenticatePage(page);
   const collected = [];
 
   await page.setUserAgent(
@@ -360,10 +387,30 @@ app.get('/debug-chrome', async (req, res) => {
       executablePath: execPath,
       exists: fs.existsSync(execPath),
       chromiumArgs: chromium.args,
-      headless: chromium.headless
+      headless: chromium.headless,
+      proxyEnabled: PROXY_ENABLED,
+      proxyHost: PROXY_ENABLED ? PROXY_HOST : null,
+      proxyUserPrefix: PROXY_ENABLED ? PROXY_USER.slice(0, 8) + '...' : null
     });
   } catch(e) {
     res.status(500).json({ success: false, error: e.message, stack: e.stack });
+  }
+});
+
+// ── DEBUG: verify the proxy is actually routing through Nigeria ──────────────
+app.get('/debug-ip', async (req, res) => {
+  let browser;
+  try {
+    browser = await launchBrowser();
+    const page = await browser.newPage();
+    await authenticatePage(page);
+    await page.goto('https://api.ipify.org?format=json', { waitUntil: 'domcontentloaded', timeout: 15000 });
+    const bodyText = await page.evaluate(() => document.body.innerText);
+    await browser.close();
+    res.json({ success: true, proxyEnabled: PROXY_ENABLED, ipResponse: bodyText });
+  } catch(e) {
+    if (browser) { try { await browser.close(); } catch(_) {} }
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
@@ -373,6 +420,7 @@ app.get('/debug-scan', async (req, res) => {
   try {
     browser = await launchBrowser();
     const page = await browser.newPage();
+    await authenticatePage(page);
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
 
@@ -417,6 +465,7 @@ app.get('/debug-scan', async (req, res) => {
     consoleMsgs.length = 0;
 
     const page2 = await browser.newPage();
+    await authenticatePage(page2);
     await page2.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
     await page2.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
 
