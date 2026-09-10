@@ -185,6 +185,71 @@ button{cursor:pointer;font-family:inherit;border:none;outline:none}
 <body>
 <div class="page">
 
+  <!-- ============================================================
+     DEBUG PANEL — paste this block into your index.html
+     right after the existing <div class="page"> ... header section,
+     anywhere near the top is fine.
+     ============================================================ -->
+
+<div style="max-width:1000px;margin:0 auto 20px;padding:0 1rem;">
+  <div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:1rem;">
+    <div style="font-size:13px;font-weight:700;color:#8b949e;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px;">
+      🔧 Debug: Champions League — Today
+    </div>
+    <button id="debugBtn" onclick="runDebugCheck()" style="font-size:13px;font-weight:600;padding:8px 16px;border-radius:8px;border:1px solid #58a6ff;background:#0c1e3a;color:#58a6ff;cursor:pointer;">
+      Check Champions League (today)
+    </button>
+    <div id="debugStatus" style="font-size:12px;color:#484f58;margin-top:8px;font-family:monospace;"></div>
+    <div id="debugOutput" style="margin-top:12px;display:flex;flex-direction:column;gap:10px;"></div>
+  </div>
+</div>
+
+<script>
+async function runDebugCheck() {
+  var btn = document.getElementById('debugBtn');
+  var status = document.getElementById('debugStatus');
+  var output = document.getElementById('debugOutput');
+  btn.disabled = true;
+  output.innerHTML = '';
+  status.textContent = 'Fetching raw scan data from proxy...';
+
+  try {
+    // Call your existing /scan endpoint but we intercept the raw response
+    var res = await fetch(CFG.proxy + '/scan?minMargin=0', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+    var data = await res.json();
+
+    status.textContent = 'Raw scan response received. Sportybet events: ' + (data.scan?.sportybet_events ?? '?') + ' | Nairabet events: ' + (data.scan?.nairabet_events ?? '?') + ' | Matched pairs: ' + (data.scan?.matched_pairs ?? '?');
+
+    // Dump the FULL raw response to console for inspection
+    console.log('=== FULL SCAN RESPONSE ===', data);
+
+    // Show it directly on page too, pretty printed
+    var pre = document.createElement('pre');
+    pre.style.cssText = 'background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px;font-size:11px;color:#e6edf3;overflow:auto;max-height:500px;white-space:pre-wrap;word-break:break-all;';
+    pre.textContent = JSON.stringify(data, null, 2);
+    output.appendChild(pre);
+
+    if (!data.success) {
+      status.textContent = 'ERROR: ' + (data.error || 'Unknown error - see output below');
+    }
+
+  } catch(e) {
+    status.textContent = 'Fetch failed: ' + e.message;
+    console.error(e);
+  }
+
+  btn.disabled = false;
+}
+</script>
+
+
+
+
+
+
+
+  
+
   <!-- Header -->
   <div class="header">
     <div class="brand">
