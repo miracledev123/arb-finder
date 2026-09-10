@@ -1,7 +1,8 @@
 const express      = require('express');
 const cors         = require('cors');
 const { Pool }     = require('pg');
-const puppeteer    = require('puppeteer'); // full puppeteer — bundles its own Chromium, no system Chrome needed
+const chromium     = require('@sparticuz/chromium');
+const puppeteer    = require('puppeteer-core'); // driven by @sparticuz/chromium's bundled binary — survives Render's ephemeral filesystem
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -20,58 +21,18 @@ app.use(express.json());
 app.get('/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
 // ── Browser launch ────────────────────────────────────────────────────────────
-const fs   = require('fs');
-const path = require('path');
-
-function findChromeExecutable() {
-  // Puppeteer's own resolver (works if cache path matches what it expects)
-  try {
-    const p = puppeteer.executablePath();
-    if (p && fs.existsSync(p)) return p;
-  } catch(e) {}
-
-  // Fallback: manually search the known Render cache locations
-  const searchRoots = [
-    '/opt/render/.cache/puppeteer/chrome',
-    path.join(process.env.HOME || '', '.cache/puppeteer/chrome'),
-    '/opt/render/project/src/.cache/puppeteer/chrome',
-  ];
-
-  for (const root of searchRoots) {
-    if (!fs.existsSync(root)) continue;
-    // Structure: chrome/<platform>-<version>/chrome-linux64/chrome
-    const versions = fs.readdirSync(root);
-    for (const v of versions) {
-      const candidate = path.join(root, v, 'chrome-linux64', 'chrome');
-      if (fs.existsSync(candidate)) return candidate;
-      const candidate2 = path.join(root, v, 'chrome-linux', 'chrome');
-      if (fs.existsSync(candidate2)) return candidate2;
-    }
-  }
-
-  return null; // let puppeteer try its own default and fail with a clear error
-}
-
+// @sparticuz/chromium bundles a Chrome binary specifically packaged to survive
+// ephemeral/serverless filesystems like Render's — no system install needed.
 async function launchBrowser() {
-  const executablePath = findChromeExecutable();
-  console.log('Chrome executable resolved to:', executablePath || '(using puppeteer default)');
+  const executablePath = await chromium.executablePath();
+  console.log('Chrome executable resolved to:', executablePath);
 
-  const launchOpts = {
-    headless: 'new',
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-      '--disable-extensions',
-    ]
-  };
-  if (executablePath) launchOpts.executablePath = executablePath;
-
-  return puppeteer.launch(launchOpts);
+  return puppeteer.launch({
+    executablePath,
+    headless: chromium.headless,
+    args: chromium.args,
+    defaultViewport: chromium.defaultViewport,
+  });
 }
 
 // ── Intercept XHR/fetch from SportyBet ───────────────────────────────────────
@@ -389,25 +350,21 @@ app.get('/arbs', async (req, res) => {
   }
 });
 
-// ── DEBUG: inspect where Chrome actually lives on this server ────────────────
-app.get('/debug-chrome', (req, res) => {
-  const results = { resolved: null, searched: [] };
-  try { results.resolved = puppeteer.executablePath(); } catch(e) { results.resolvedError = e.message; }
-
-  const roots = [
-    '/opt/render/.cache/puppeteer',
-    path.join(process.env.HOME || '', '.cache/puppeteer'),
-    '/opt/render/project/src/.cache/puppeteer',
-  ];
-  for (const root of roots) {
-    const entry = { root, exists: fs.existsSync(root), contents: [] };
-    if (entry.exists) {
-      try { entry.contents = fs.readdirSync(root, { recursive: true }).slice(0, 50); } catch(e) { entry.error = e.message; }
-    }
-    results.searched.push(entry);
+// ── DEBUG: inspect Chrome resolution via @sparticuz/chromium ─────────────────
+app.get('/debug-chrome', async (req, res) => {
+  try {
+    const execPath = await chromium.executablePath();
+    const fs = require('fs');
+    res.json({
+      success: true,
+      executablePath: execPath,
+      exists: fs.existsSync(execPath),
+      chromiumArgs: chromium.args,
+      headless: chromium.headless
+    });
+  } catch(e) {
+    res.status(500).json({ success: false, error: e.message, stack: e.stack });
   }
-  results.foundExecutable = findChromeExecutable();
-  res.json(results);
 });
 
 // ── DEBUG: dump raw intercepted payloads without any parsing/matching ────────
