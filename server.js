@@ -374,11 +374,15 @@ app.get('/debug-scan', async (req, res) => {
     browser = await launchBrowser();
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
 
     const raw = { sportybet: [], nairabet: [] };
+    const diagnostics = { sportybet: {}, nairabet: {} };
 
+    const allResponses = [];
     page.on('response', async (response) => {
       const url = response.url();
+      allResponses.push({ url, status: response.status() });
       const ct  = response.headers()['content-type'] || '';
       if (!ct.includes('json')) return;
       try {
@@ -388,15 +392,37 @@ app.get('/debug-scan', async (req, res) => {
       } catch(e) {}
     });
 
-    // Sporty: use domcontentloaded (faster than networkidle2) with a short settle time
-    await page.goto('https://www.sportybet.com/ng/', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(e => console.log('sporty nav error', e.message));
-    await new Promise(r => setTimeout(r, 2500));
+    const consoleMsgs = [];
+    page.on('console', msg => consoleMsgs.push(msg.text()));
+    page.on('pageerror', err => consoleMsgs.push('PAGEERROR: ' + err.message));
+
+    let sportyNavResult = 'ok';
+    try {
+      await page.goto('https://www.sportybet.com/ng/', { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await new Promise(r => setTimeout(r, 5000));
+    } catch(e) { sportyNavResult = 'ERROR: ' + e.message; }
+
+    diagnostics.sportybet = {
+      navResult: sportyNavResult,
+      finalUrl: page.url(),
+      title: await page.title().catch(() => 'N/A'),
+      totalResponses: allResponses.length,
+      sampleResponseUrls: allResponses.slice(0, 15).map(r => r.status + ' ' + r.url),
+      bodyTextSnippet: await page.evaluate(() => document.body ? document.body.innerText.slice(0, 300) : 'NO BODY').catch(() => 'eval failed'),
+      consoleErrors: consoleMsgs.slice(0, 10)
+    };
+
     await page.close();
+    allResponses.length = 0;
+    consoleMsgs.length = 0;
 
     const page2 = await browser.newPage();
     await page2.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
+    await page2.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
+
     page2.on('response', async (response) => {
       const url = response.url();
+      allResponses.push({ url, status: response.status() });
       const ct  = response.headers()['content-type'] || '';
       if (!ct.includes('json')) return;
       try {
@@ -404,13 +430,28 @@ app.get('/debug-scan', async (req, res) => {
         if (url.includes('nairabet.com')) raw.nairabet.push({ url, sample: json });
       } catch(e) {}
     });
-    await page2.goto('https://www.nairabet.com/', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(e => console.log('naira nav error', e.message));
-    await new Promise(r => setTimeout(r, 2500));
-    await page2.close();
+    page2.on('console', msg => consoleMsgs.push(msg.text()));
+    page2.on('pageerror', err => consoleMsgs.push('PAGEERROR: ' + err.message));
 
+    let nairaNavResult = 'ok';
+    try {
+      await page2.goto('https://www.nairabet.com/', { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await new Promise(r => setTimeout(r, 5000));
+    } catch(e) { nairaNavResult = 'ERROR: ' + e.message; }
+
+    diagnostics.nairabet = {
+      navResult: nairaNavResult,
+      finalUrl: page2.url(),
+      title: await page2.title().catch(() => 'N/A'),
+      totalResponses: allResponses.length,
+      sampleResponseUrls: allResponses.slice(0, 15).map(r => r.status + ' ' + r.url),
+      bodyTextSnippet: await page2.evaluate(() => document.body ? document.body.innerText.slice(0, 300) : 'NO BODY').catch(() => 'eval failed'),
+      consoleErrors: consoleMsgs.slice(0, 10)
+    };
+
+    await page2.close();
     await browser.close();
 
-    // Truncate samples so response isn't massive — just first 2 calls per site, first 1500 chars each
     const trim = (arr) => arr.slice(0, 2).map(x => ({
       url: x.url,
       sample: JSON.stringify(x.sample).slice(0, 1500)
@@ -421,7 +462,8 @@ app.get('/debug-scan', async (req, res) => {
       sportybet_calls_intercepted: raw.sportybet.length,
       nairabet_calls_intercepted: raw.nairabet.length,
       sportybet_sample: trim(raw.sportybet),
-      nairabet_sample: trim(raw.nairabet)
+      nairabet_sample: trim(raw.nairabet),
+      diagnostics
     });
 
   } catch(e) {
