@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Arb Finder — SportyBet × Nairabet</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--s1:#161b22;--s2:#1c2230;--s3:#21262d;
+  --bd:#30363d;--bd2:#444c56;
+  --tx:#e6edf3;--muted:#8b949e;--dim:#484f58;
+  --green:#3fb950;--gbg:#0d2119;--gbd:rgba(63,185,80,0.3);
+  --blue:#58a6ff;--bbg:#0c1e3a;--bbd:rgba(88,166,255,0.3);
+  --amber:#d29922;--abg:#2a1f00;--abd:rgba(210,153,34,0.35);
+  --red:#f85149;--rbg:#2a0d0d;
+  --gold:#ffd700;--gold2:#b8860b;--goldbg:rgba(255,215,0,0.07);--goldbr:rgba(255,215,0,0.25);
+  --r:8px;--mono:'JetBrains Mono','Fira Mono',monospace;
+}
+body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;min-height:100vh}
+.page{max-width:1000px;margin:0 auto;padding:1.5rem 1rem 5rem}
+
+/* Header */
+.header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:1.5rem}
+.brand{display:flex;align-items:center;gap:10px}
+.pulse{width:9px;height:9px;border-radius:50%;background:var(--green);flex-shrink:0;animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(63,185,80,.5)}60%{box-shadow:0 0 0 7px rgba(63,185,80,0)}100%{box-shadow:0 0 0 0 rgba(63,185,80,0)}}
+.brand h1{font-size:18px;font-weight:700;letter-spacing:-.3px}
+.brand p{font-size:12px;color:var(--muted);margin-top:1px}
+.hactions{display:flex;gap:8px;flex-wrap:wrap}
+button{cursor:pointer;font-family:inherit;border:none;outline:none}
+.btn{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500;padding:7px 16px;border-radius:var(--r);border:1px solid var(--bd2);background:var(--s1);color:var(--muted);transition:.15s}
+.btn:hover{background:var(--s2);color:var(--tx)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-scan{background:var(--gbg);color:var(--green);border-color:var(--gbd)}
+.btn-scan:hover{background:#102a1a;color:#4ade80;border-color:var(--green)}
+
+/* Config */
+.cfg-panel{background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:1.25rem;margin-bottom:1.25rem;display:none}
+.cfg-panel h3{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:1rem}
+.cfg-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:580px){.cfg-grid{grid-template-columns:1fr}}
+.cfg-f{display:flex;flex-direction:column;gap:4px}
+.cfg-f label{font-size:12px;color:var(--muted)}
+.cfg-f input{font-size:12px;font-family:var(--mono);padding:7px 10px;border-radius:var(--r);border:1px solid var(--bd);background:var(--s2);color:var(--tx)}
+.cfg-f input:focus{outline:none;border-color:var(--blue)}
+.cfg-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.btn-save{font-size:13px;font-weight:500;padding:7px 16px;border-radius:var(--r);border:1px solid var(--bbd);background:var(--bbg);color:var(--blue)}
+.btn-save:hover{background:#0e2b55}
+.cfg-sql{margin-top:12px;font-size:11px;color:var(--dim);line-height:1.7}
+.cfg-sql code{font-family:var(--mono);font-size:10px;color:var(--muted);background:var(--s2);padding:2px 5px;border-radius:4px}
+
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1.25rem}
+@media(max-width:560px){.stats{grid-template-columns:1fr 1fr}}
+.stat{background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);padding:11px 14px}
+.stat-v{font-size:22px;font-weight:700;font-family:var(--mono);color:var(--tx);line-height:1}
+.stat-v.g{color:var(--green)}
+.stat-l{font-size:11px;color:var(--muted);margin-top:4px}
+
+/* Day group */
+.day-group{margin-bottom:1.5rem}
+.day-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);padding:0 2px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.day-label::after{content:'';flex:1;height:1px;background:var(--bd)}
+
+/* Arb card */
+.arb-card{background:var(--s1);border:1px solid var(--bd);border-radius:12px;overflow:hidden;margin-bottom:10px;transition:border-color .2s}
+.arb-card.fresh{border-color:rgba(63,185,80,.4)}
+
+/* VIP card */
+.arb-card.vip{
+  background:linear-gradient(135deg,#1a1600 0%,var(--s1) 40%,#161200 100%);
+  border-color:var(--goldbr);
+  box-shadow:0 0 20px rgba(255,215,0,.06);
+  position:relative;overflow:hidden;
+}
+.arb-card.vip::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--gold),transparent);
+}
+.vip-watermark{
+  position:absolute;right:-10px;top:50%;transform:translateY(-50%);
+  font-size:80px;font-weight:900;color:rgba(255,215,0,.04);
+  pointer-events:none;letter-spacing:-2px;user-select:none;
+}
+
+/* Card head */
+.arb-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 15px;border-bottom:1px solid var(--bd);flex-wrap:wrap}
+.arb-event{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px}
+.arb-card.vip .arb-event{color:var(--gold)}
+.arb-meta{font-size:11px;color:var(--muted);margin-top:2px}
+.arb-right{display:flex;align-items:center;gap:7px;flex-shrink:0;flex-wrap:wrap}
+
+/* Badges */
+.badge-margin{
+  font-size:12px;font-weight:800;font-family:var(--mono);
+  padding:3px 10px;border-radius:20px;
+  background:var(--gbg);color:var(--green);border:1px solid var(--gbd);
+}
+.arb-card.vip .badge-margin{
+  background:var(--goldbg);color:var(--gold);
+  border-color:var(--goldbr);
+  text-shadow:0 0 8px rgba(255,215,0,.4);
+}
+.badge-scans{font-size:10px;padding:2px 7px;border-radius:20px;background:var(--s2);border:1px solid var(--bd);color:var(--dim);font-family:var(--mono)}
+.badge-timer{font-size:11px;font-family:var(--mono);padding:3px 9px;border-radius:20px;background:var(--s2);border:1px solid var(--bd);color:var(--muted);display:flex;align-items:center;gap:5px}
+.tdot{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0}
+.tdot.changed{background:var(--amber)}
+
+/* Card body */
+.arb-body{padding:13px 15px}
+.legs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:13px}
+@media(max-width:480px){.legs{grid-template-columns:1fr}}
+.leg{background:var(--s2);border:1px solid var(--bd);border-radius:var(--r);padding:11px 13px}
+.arb-card.vip .leg{background:rgba(255,215,0,.02);border-color:rgba(255,215,0,.12)}
+.leg-book{font-size:11px;color:var(--muted);margin-bottom:5px}
+.chip{font-size:10px;font-weight:800;padding:2px 7px;border-radius:4px;letter-spacing:.3px}
+.chip-s{background:#0d2b0d;color:#4ade80;border:1px solid rgba(74,222,128,.2)}
+.chip-n{background:#0c1a3a;color:#60a5fa;border:1px solid rgba(96,165,250,.2)}
+.leg-out{font-size:13px;font-weight:700;margin-bottom:2px}
+.leg-mkt{font-size:11px;color:var(--muted);margin-bottom:7px}
+.leg-odds{font-size:22px;font-weight:700;font-family:var(--mono)}
+.leg-impl{font-size:11px;color:var(--dim);margin-top:2px}
+
+/* Calculator */
+.calc{border-top:1px solid var(--bd);padding-top:12px}
+.arb-card.vip .calc{border-color:rgba(255,215,0,.1)}
+.calc-title{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:8px}
+.calc-row{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.calc-pfx{font-size:15px;font-weight:700;color:var(--muted)}
+.calc-inp{
+  font-size:15px;font-weight:700;font-family:var(--mono);
+  padding:7px 12px;border-radius:var(--r);
+  border:1px solid var(--bd2);background:var(--s2);
+  color:var(--tx);width:160px;
+}
+.calc-inp:focus{outline:none;border-color:var(--blue)}
+.calc-inp::placeholder{color:var(--dim)}
+.splits{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:480px){.splits{grid-template-columns:1fr}}
+.split{background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:9px 12px}
+.split-lbl{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px}
+.split-amt{font-size:16px;font-weight:700;font-family:var(--mono)}
+.split-ret{font-size:11px;color:var(--muted);margin-top:2px}
+.profit-row{
+  margin-top:9px;padding:8px 12px;border-radius:var(--r);
+  background:var(--gbg);border:1px solid var(--gbd);
+  font-size:13px;font-weight:700;font-family:var(--mono);color:var(--green);display:none;
+}
+.arb-card.vip .profit-row{background:var(--goldbg);border-color:var(--goldbr);color:var(--gold)}
+
+/* Empty */
+.empty{text-align:center;padding:4rem 1rem;color:var(--muted)}
+.empty-icon{font-size:40px;margin-bottom:12px;opacity:.35}
+.empty h2{font-size:16px;font-weight:700;color:var(--tx);margin-bottom:6px}
+.empty p{font-size:13px;color:var(--muted);max-width:360px;margin:0 auto;line-height:1.7}
+
+/* Pagination */
+.pagination{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:1.5rem;flex-wrap:wrap}
+.pag-btn{font-size:13px;font-weight:500;padding:6px 14px;border-radius:var(--r);border:1px solid var(--bd);background:var(--s1);color:var(--muted)}
+.pag-btn:hover:not(:disabled){background:var(--s2);color:var(--tx)}
+.pag-btn.active{background:var(--gbg);color:var(--green);border-color:var(--gbd)}
+.pag-btn:disabled{opacity:.35;cursor:not-allowed}
+.pag-info{font-size:12px;color:var(--dim);font-family:var(--mono);padding:0 4px}
+
+/* Status */
+.status{text-align:center;font-size:12px;font-family:var(--mono);color:var(--dim);margin-top:1rem;min-height:18px}
+
+/* Spinner */
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin{display:inline-block;animation:spin .8s linear infinite}
+
+/* Toast */
+#toast{position:fixed;bottom:22px;right:22px;z-index:999;font-size:13px;font-weight:600;padding:10px 18px;border-radius:var(--r);background:var(--s2);border:1px solid var(--bd2);color:var(--tx);max-width:300px;opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.show{opacity:1}
+#toast.t-ok{background:var(--gbg);border-color:var(--gbd);color:var(--green)}
+#toast.t-err{background:var(--rbg);border-color:rgba(248,81,73,.4);color:var(--red)}
+#toast.t-warn{background:var(--abg);border-color:var(--abd);color:var(--amber)}
+
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="brand">
+      <div class="pulse"></div>
+      <div>
+        <h1>Arb Finder</h1>
+        <p>SportyBet &times; Nairabet &mdash; All sports &bull; 3%+ margin only</p>
+      </div>
+    </div>
+    <div class="hactions">
+      <button class="btn" onclick="toggleCfg()">&#9881; Configure</button>
+      <button class="btn" onclick="clearAll()">&#128465; Clear DB</button>
+      <button class="btn btn-scan" id="scanBtn" onclick="runScan()">
+        <span id="scanIcon">&#8635;</span> Check for arbs
+      </button>
+    </div>
+  </div>
+
+  <!-- Config -->
+  <div class="cfg-panel" id="cfgPanel">
+    <h3>Configuration</h3>
+    <div class="cfg-grid">
+      <div class="cfg-f">
+        <label>Proxy URL (your Render service URL)</label>
+        <input id="cfgProxy" type="text" placeholder="https://arb-finder-proxy.onrender.com"/>
+      </div>
+      <div class="cfg-f">
+        <label>Min arb margin (%)</label>
+        <input id="cfgMargin" type="number" min="3" max="20" step="0.5" value="3"/>
+      </div>
+    </div>
+    <div class="cfg-actions">
+      <button class="btn-save" onclick="saveCfg()">&#10003; Save</button>
+    </div>
+    <div class="cfg-sql">
+      <strong>Run this SQL in Supabase first (add kickoff_ts column if missing):</strong><br>
+      <code>ALTER TABLE arb_opportunities ADD COLUMN IF NOT EXISTS kickoff_ts BIGINT DEFAULT 0;</code>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat"><div class="stat-v g" id="stActive">0</div><div class="stat-l">Active arbs</div></div>
+    <div class="stat"><div class="stat-v" id="stOldest">&mdash;</div><div class="stat-l">Oldest arb</div></div>
+    <div class="stat"><div class="stat-v" id="stScan">&mdash;</div><div class="stat-l">Last scan</div></div>
+    <div class="stat"><div class="stat-v" id="stPairs">&mdash;</div><div class="stat-l">Event pairs</div></div>
+  </div>
+
+  <!-- Arb list -->
+  <div id="arbList"></div>
+
+  <!-- Pagination -->
+  <div class="pagination" id="pagBar" style="display:none"></div>
+
+  <div class="status" id="statusBar"></div>
+</div>
+<div id="toast"></div>
+
+<script>
+/* ── State ── */
+var CFG    = { proxy: '', margin: 3.0 };
+var STATE  = { arbs: [], total: 0, page: 1, pages: 1, perPage: 20 };
+var TIMERS = {};
+var scanning = false;
+var lastScanInfo = null;
+var VIP_THRESHOLD = 10; // top arb (highest margin) gets VIP
+
+/* ── Config ── */
+function loadCfg() {
+  try { var s = localStorage.getItem('arbfinder_cfg2'); if(s) CFG = Object.assign(CFG, JSON.parse(s)); } catch(e){}
+  document.getElementById('cfgProxy').value  = CFG.proxy  || '';
+  document.getElementById('cfgMargin').value = CFG.margin || 3.0;
+}
+function saveCfg() {
+  CFG.proxy  = document.getElementById('cfgProxy').value.trim().replace(/\/$/,'');
+  CFG.margin = parseFloat(document.getElementById('cfgMargin').value) || 3.0;
+  try { localStorage.setItem('arbfinder_cfg2', JSON.stringify(CFG)); } catch(e){}
+  toast('Configuration saved', 'ok');
+  document.getElementById('cfgPanel').style.display = 'none';
+}
+function toggleCfg() {
+  var p = document.getElementById('cfgPanel');
+  p.style.display = p.style.display === 'none' ? 'block' : 'none';
+}
+
+/* ── Toast / Status ── */
+var _tt;
+function toast(msg, type) {
+  var el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className   = 'show' + (type ? ' t-'+type : '');
+  clearTimeout(_tt);
+  _tt = setTimeout(function(){ el.className=''; }, 3400);
+}
+function setStatus(msg) { document.getElementById('statusBar').textContent = msg; }
+
+/* ── Timer helpers ── */
+function fmtTimer(ts) {
+  var s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60)  return s + 's';
+  var m = Math.floor(s / 60);
+  if (m < 60)  return m + 'm ' + (s%60) + 's';
+  var h = Math.floor(m / 60);
+  return h + 'h ' + (m%60) + 'm';
+}
+function stopTimers() { Object.keys(TIMERS).forEach(function(k){ clearInterval(TIMERS[k]); }); TIMERS={}; }
+function startTimers() {
+  stopTimers();
+  STATE.arbs.forEach(function(a) {
+    var el = document.getElementById('tm_'+a.id);
+    if (!el) return;
+    var ts = new Date(a.first_seen).getTime();
+    TIMERS[a.id] = setInterval(function(){
+      var e2 = document.getElementById('tm_'+a.id);
+      if (e2) e2.textContent = fmtTimer(ts);
+    }, 1000);
+  });
+}
+
+/* ── Calc ── */
+function onCalc(id) {
+  var arb   = STATE.arbs.find(function(a){ return a.id===id; });
+  if (!arb) return;
+  var total = parseFloat(document.getElementById('ci_'+id).value) || 0;
+  var s1El  = document.getElementById('sp1_'+id);
+  var s2El  = document.getElementById('sp2_'+id);
+  var prEl  = document.getElementById('pr_'+id);
+  if (total <= 0) {
+    s1El.querySelector('.split-amt').textContent = '—';
+    s2El.querySelector('.split-amt').textContent = '—';
+    s1El.querySelector('.split-ret').textContent = '';
+    s2El.querySelector('.split-ret').textContent = '';
+    prEl.style.display = 'none'; return;
+  }
+  var o1=arb.leg1_odds, o2=arb.leg2_odds;
+  var i1=1/o1, i2=1/o2, tot=i1+i2;
+  var s1=(i1/tot)*total, s2=(i2/tot)*total;
+  var ret=s1*o1, prof=ret-total, pct=(prof/total)*100;
+  s1El.querySelector('.split-amt').textContent='₦'+s1.toFixed(2);
+  s2El.querySelector('.split-amt').textContent='₦'+s2.toFixed(2);
+  s1El.querySelector('.split-ret').textContent='Win → ₦'+(s1*o1).toFixed(2);
+  s2El.querySelector('.split-ret').textContent='Win → ₦'+(s2*o2).toFixed(2);
+  prEl.textContent='Guaranteed profit: ₦'+prof.toFixed(2)+' ('+pct.toFixed(2)+'%)';
+  prEl.style.display='block';
+}
+
+/* ── Day label ── */
+var _today = (function(){ var d=new Date();d.setHours(0,0,0,0);return d; })();
+function getDayLabel(ts) {
+  if (!ts) return 'Unknown';
+  var d = new Date(Number(ts)*1000); if(isNaN(d)) d=new Date(Number(ts));
+  if(isNaN(d)) return 'Unknown';
+  d.setHours(0,0,0,0);
+  var diff = Math.round((d - _today) / 86400000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Tomorrow';
+  if (diff < 0)   return 'Earlier';
+  return d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'short'});
+}
+function getDayOrder(ts) {
+  if (!ts) return 9999;
+  var d = new Date(Number(ts)*1000); if(isNaN(d)) d=new Date(Number(ts));
+  if(isNaN(d)) return 9999;
+  d.setHours(0,0,0,0);
+  return Math.round((d - _today) / 86400000);
+}
+
+/* ── Render ── */
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function impl(o){ return ((1/o)*100).toFixed(1)+'%'; }
+
+function renderArbs() {
+  var list = document.getElementById('arbList');
+  stopTimers();
+
+  if (!STATE.arbs.length) {
+    list.innerHTML = '<div class="empty"><div class="empty-icon">&#128270;</div><h2>No arbs found</h2><p>No opportunities above 3% right now between SportyBet and Nairabet. Hit refresh to scan again.</p></div>';
+    renderPagination();
+    return;
+  }
+
+  // Group by day
+  var groups = {};
+  var groupOrder = [];
+  STATE.arbs.forEach(function(a) {
+    var label = getDayLabel(a.kickoff_ts);
+    var order = getDayOrder(a.kickoff_ts);
+    if (!groups[label]) { groups[label] = { arbs: [], order: order }; groupOrder.push(label); }
+    groups[label].arbs.push(a);
+  });
+  // Sort groups by day order
+  groupOrder.sort(function(a,b){ return groups[a].order - groups[b].order; });
+  // Within each group, sort by margin desc
+  groupOrder.forEach(function(g){ groups[g].arbs.sort(function(a,b){ return b.margin - a.margin; }); });
+
+  // The overall top arb (highest margin across all) gets VIP treatment
+  var allSorted = STATE.arbs.slice().sort(function(a,b){ return b.margin - a.margin; });
+  var topId = allSorted[0] ? allSorted[0].id : null;
+
+  var html = '';
+  groupOrder.forEach(function(label) {
+    html += '<div class="day-group">';
+    html += '<div class="day-label">'+esc(label)+'</div>';
+    groups[label].arbs.forEach(function(arb, idx) {
+      var isVip      = arb.id === topId;
+      var isFresh    = (Date.now() - new Date(arb.first_seen).getTime()) < 180000;
+      var isChanged  = arb.odds_changed;
+      var firstTs    = new Date(arb.first_seen).getTime();
+      var cardClass  = 'arb-card'+(isVip?' vip':'')+(isFresh?' fresh':'');
+
+      html += '<div class="'+cardClass+'" id="card_'+arb.id+'">';
+      if (isVip) html += '<div class="vip-watermark">VIP</div>';
+
+      // Head
+      html += '<div class="arb-head">';
+      html +=   '<div><div class="arb-event">'+esc(arb.event_name)+'</div>';
+      html +=   '<div class="arb-meta">'+esc(arb.sport)+' &middot; '+esc(arb.market_name)+'</div></div>';
+      html +=   '<div class="arb-right">';
+      html +=     '<span class="badge-margin">+'+parseFloat(arb.margin).toFixed(2)+'%</span>';
+      if (arb.scan_count > 1) html += '<span class="badge-scans">&#9632; '+arb.scan_count+' scans</span>';
+      html +=     '<span class="badge-timer"><span class="tdot'+(isChanged?' changed':'')+'"></span><span id="tm_'+arb.id+'">'+fmtTimer(firstTs)+'</span></span>';
+      html +=   '</div>';
+      html += '</div>';
+
+      // Body
+      html += '<div class="arb-body">';
+      html += '<div class="legs">';
+      html +=   '<div class="leg">';
+      html +=     '<div class="leg-book"><span class="chip chip-s">SPORTYBET</span></div>';
+      html +=     '<div class="leg-out">'+esc(arb.leg1_outcome)+'</div>';
+      html +=     '<div class="leg-mkt">'+esc(arb.leg1_market)+'</div>';
+      html +=     '<div class="leg-odds">'+parseFloat(arb.leg1_odds).toFixed(2)+'</div>';
+      html +=     '<div class="leg-impl">Implied: '+impl(arb.leg1_odds)+'</div>';
+      html +=   '</div>';
+      html +=   '<div class="leg">';
+      html +=     '<div class="leg-book"><span class="chip chip-n">NAIRABET</span></div>';
+      html +=     '<div class="leg-out">'+esc(arb.leg2_outcome)+'</div>';
+      html +=     '<div class="leg-mkt">'+esc(arb.leg2_market)+'</div>';
+      html +=     '<div class="leg-odds">'+parseFloat(arb.leg2_odds).toFixed(2)+'</div>';
+      html +=     '<div class="leg-impl">Implied: '+impl(arb.leg2_odds)+'</div>';
+      html +=   '</div>';
+      html += '</div>';
+
+      // Calc
+      html += '<div class="calc">';
+      html +=   '<div class="calc-title">Stake calculator</div>';
+      html +=   '<div class="calc-row"><span class="calc-pfx">&#8358;</span>';
+      html +=     '<input class="calc-inp" id="ci_'+arb.id+'" type="number" min="0" step="500" placeholder="e.g. 10,000" oninput="onCalc(\''+arb.id+'\')" />';
+      html +=   '</div>';
+      html +=   '<div class="splits">';
+      html +=     '<div class="split" id="sp1_'+arb.id+'"><div class="split-lbl">SportyBet stake</div><div class="split-amt">&mdash;</div><div class="split-ret"></div></div>';
+      html +=     '<div class="split" id="sp2_'+arb.id+'"><div class="split-lbl">Nairabet stake</div><div class="split-amt">&mdash;</div><div class="split-ret"></div></div>';
+      html +=   '</div>';
+      html +=   '<div class="profit-row" id="pr_'+arb.id+'"></div>';
+      html += '</div>';
+
+      html += '</div></div>'; // arb-body, arb-card
+    });
+    html += '</div>'; // day-group
+  });
+
+  list.innerHTML = html;
+  updateStats();
+  startTimers();
+  renderPagination();
+}
+
+/* ── Pagination ── */
+function renderPagination() {
+  var bar = document.getElementById('pagBar');
+  if (STATE.pages <= 1) { bar.style.display='none'; return; }
+  bar.style.display = 'flex';
+  var html = '';
+  html += '<button class="pag-btn" onclick="goPage('+(STATE.page-1)+')" '+(STATE.page<=1?'disabled':'')+'>&#8592; Prev</button>';
+  var start = Math.max(1, STATE.page-2);
+  var end   = Math.min(STATE.pages, STATE.page+2);
+  if (start > 1) html += '<button class="pag-btn" onclick="goPage(1)">1</button>'+(start>2?'<span class="pag-info">…</span>':'');
+  for (var i=start; i<=end; i++) {
+    html += '<button class="pag-btn'+(i===STATE.page?' active':'')+'" onclick="goPage('+i+')">'+i+'</button>';
+  }
+  if (end < STATE.pages) html += (end<STATE.pages-1?'<span class="pag-info">…</span>':'')+'<button class="pag-btn" onclick="goPage('+STATE.pages+')">'+STATE.pages+'</button>';
+  html += '<button class="pag-btn" onclick="goPage('+(STATE.page+1)+')" '+(STATE.page>=STATE.pages?'disabled':'')+'>Next &#8594;</button>';
+  html += '<span class="pag-info">Page '+STATE.page+' of '+STATE.pages+' ('+STATE.total+' arbs)</span>';
+  bar.innerHTML = html;
+}
+
+async function goPage(p) {
+  if (p < 1 || p > STATE.pages || p === STATE.page) return;
+  STATE.page = p;
+  setStatus('Loading page '+p+'…');
+  try {
+    var url = CFG.proxy + '/arbs?page='+p+'&perPage='+STATE.perPage;
+    var res = await fetch(url);
+    var data = await res.json();
+    if (data.success) {
+      STATE.arbs  = data.arbs;
+      STATE.total = data.total;
+      STATE.pages = data.pages;
+      renderArbs();
+      setStatus('Page '+p+' loaded.');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  } catch(e) { setStatus('Page load error: '+e.message); }
+}
+
+/* ── Stats ── */
+function updateStats() {
+  document.getElementById('stActive').textContent = STATE.total || STATE.arbs.length;
+  if (STATE.arbs.length) {
+    var oldest = Math.min.apply(null, STATE.arbs.map(function(a){ return new Date(a.first_seen).getTime(); }));
+    document.getElementById('stOldest').textContent = fmtTimer(oldest);
+  }
+  if (lastScanInfo) {
+    document.getElementById('stPairs').textContent = lastScanInfo.matched_pairs || '—';
+  }
+}
+setInterval(updateStats, 5000);
+
+/* ── API calls ── */
+async function loadFromProxy() {
+  if (!CFG.proxy) return;
+  setStatus('Loading arbs from database…');
+  try {
+    var res  = await fetch(CFG.proxy + '/arbs?page=1&perPage='+STATE.perPage);
+    var data = await res.json();
+    if (data.success) {
+      STATE.arbs  = data.arbs;
+      STATE.total = data.total;
+      STATE.pages = data.pages;
+      STATE.page  = 1;
+      renderArbs();
+      setStatus(data.total ? 'Loaded '+data.total+' arb'+(data.total!==1?'s':'')+' from database.' : 'No active arbs in database.');
+    }
+  } catch(e) { setStatus('Could not reach proxy: '+e.message); }
+}
+
+async function runScan() {
+  if (scanning) return;
+  if (!CFG.proxy) { toast('Set your Render proxy URL in Configure first', 'warn'); toggleCfg(); return; }
+  scanning = true;
+  var btn  = document.getElementById('scanBtn');
+  var icon = document.getElementById('scanIcon');
+  btn.disabled = true; icon.className='spin'; icon.textContent='⟳';
+  setStatus('Scanning SportyBet and Nairabet — all sports, all markets…');
+  try {
+    var res  = await fetch(CFG.proxy+'/scan?minMargin='+CFG.margin, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    var data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Scan failed');
+    lastScanInfo = data.scan;
+    STATE.arbs  = data.arbs;
+    STATE.total = data.total;
+    STATE.pages = data.pages;
+    STATE.page  = 1;
+    document.getElementById('stScan').textContent = new Date().toLocaleTimeString();
+    renderArbs();
+    var s = data.scan;
+    var msg = s.arbs_found
+      ? '✅ '+s.arbs_found+' arb'+(s.arbs_found!==1?'s':'')+' found! (+'+s.added+' new, '+s.updated+' updated, '+s.removed+' removed)'
+      : '🔍 No arbs above '+CFG.margin+'% this scan. ('+s.matched_pairs+' event pairs checked)';
+    setStatus(msg);
+    toast(s.arbs_found ? s.arbs_found+' arb'+(s.arbs_found!==1?'s':'')+' found!' : 'No arbs this scan', s.arbs_found?'ok':'');
+  } catch(e) {
+    toast('Scan error: '+e.message, 'err');
+    setStatus('Error: '+e.message);
+  }
+  scanning=false; btn.disabled=false; icon.className=''; icon.textContent='⟳';
+}
+
+async function clearAll() {
+  if (!confirm('Delete all arbs from the database?')) return;
+  if (!CFG.proxy) return;
+  try {
+    await fetch(CFG.proxy+'/arbs', { method:'DELETE' });
+    STATE.arbs=[]; STATE.total=0; STATE.pages=1; STATE.page=1;
+    renderArbs();
+    toast('Database cleared', 'warn');
+  } catch(e) { toast('Clear error: '+e.message,'err'); }
+}
+
+/* ── Boot ── */
+loadCfg();
+renderArbs();
+if (CFG.proxy) loadFromProxy();
+else {
+  setStatus('Click Configure → enter your Render proxy URL → Save → then scan.');
+  document.getElementById('cfgPanel').style.display = 'block';
+}
+</script>
+</body>
+</html>
