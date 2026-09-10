@@ -20,10 +20,43 @@ app.use(express.json());
 app.get('/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
 // ── Browser launch ────────────────────────────────────────────────────────────
+const fs   = require('fs');
+const path = require('path');
+
+function findChromeExecutable() {
+  // Puppeteer's own resolver (works if cache path matches what it expects)
+  try {
+    const p = puppeteer.executablePath();
+    if (p && fs.existsSync(p)) return p;
+  } catch(e) {}
+
+  // Fallback: manually search the known Render cache locations
+  const searchRoots = [
+    '/opt/render/.cache/puppeteer/chrome',
+    path.join(process.env.HOME || '', '.cache/puppeteer/chrome'),
+    '/opt/render/project/src/.cache/puppeteer/chrome',
+  ];
+
+  for (const root of searchRoots) {
+    if (!fs.existsSync(root)) continue;
+    // Structure: chrome/<platform>-<version>/chrome-linux64/chrome
+    const versions = fs.readdirSync(root);
+    for (const v of versions) {
+      const candidate = path.join(root, v, 'chrome-linux64', 'chrome');
+      if (fs.existsSync(candidate)) return candidate;
+      const candidate2 = path.join(root, v, 'chrome-linux', 'chrome');
+      if (fs.existsSync(candidate2)) return candidate2;
+    }
+  }
+
+  return null; // let puppeteer try its own default and fail with a clear error
+}
+
 async function launchBrowser() {
-  // Full puppeteer bundles its own Chromium (downloaded during npm install),
-  // so no executablePath or system Chrome install is needed.
-  return puppeteer.launch({
+  const executablePath = findChromeExecutable();
+  console.log('Chrome executable resolved to:', executablePath || '(using puppeteer default)');
+
+  const launchOpts = {
     headless: 'new',
     args: [
       '--no-sandbox',
@@ -35,7 +68,10 @@ async function launchBrowser() {
       '--single-process',
       '--disable-extensions',
     ]
-  });
+  };
+  if (executablePath) launchOpts.executablePath = executablePath;
+
+  return puppeteer.launch(launchOpts);
 }
 
 // ── Intercept XHR/fetch from SportyBet ───────────────────────────────────────
@@ -351,6 +387,27 @@ app.get('/arbs', async (req, res) => {
     console.error('Load error:', e.message);
     res.status(500).json({ success: false, error: e.message });
   }
+});
+
+// ── DEBUG: inspect where Chrome actually lives on this server ────────────────
+app.get('/debug-chrome', (req, res) => {
+  const results = { resolved: null, searched: [] };
+  try { results.resolved = puppeteer.executablePath(); } catch(e) { results.resolvedError = e.message; }
+
+  const roots = [
+    '/opt/render/.cache/puppeteer',
+    path.join(process.env.HOME || '', '.cache/puppeteer'),
+    '/opt/render/project/src/.cache/puppeteer',
+  ];
+  for (const root of roots) {
+    const entry = { root, exists: fs.existsSync(root), contents: [] };
+    if (entry.exists) {
+      try { entry.contents = fs.readdirSync(root, { recursive: true }).slice(0, 50); } catch(e) { entry.error = e.message; }
+    }
+    results.searched.push(entry);
+  }
+  results.foundExecutable = findChromeExecutable();
+  res.json(results);
 });
 
 // ── DEBUG: dump raw intercepted payloads without any parsing/matching ────────
